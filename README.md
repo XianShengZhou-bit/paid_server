@@ -66,6 +66,7 @@ paid_http/
 ├── 数据库表结构/                # 5 张业务表设计文档
 ├── sql_create_and_add/         # MySQL 建表与测试数据脚本
 ├── run_all.sh                  # 一键编译 / 启停 / 状态查看
+├── 项目文档.md                  # 完整业务与架构文档
 ├── .env.example                # 环境变量模板
 └── .gitignore
 ```
@@ -137,7 +138,7 @@ bash sql_create_and_add/setup_mysql_test_data.sh
 | WS | `/ws/payment` | 网关 | 页面 A 绑定会话，接收支付结果推送 |
 | POST | `/internal/payment/result` | 网关（内网） | 后端回调，触发 WebSocket 推送 |
 
-详细请求体、错误码与逐步处理流程见各模块文档：
+详细业务规则、架构与错误码见 [项目文档](项目文档.md)；各模块逐步流程见：
 
 - [网关业务流程](gateway/网关业务流程文档.md)
 - [后端业务流程](backend/后端业务流程文档.md)
