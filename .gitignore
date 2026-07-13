@@ -1,0 +1,33 @@
+# 敏感配置
+.env
+
+# C++ / CMake 编译产物
+backend/build/
+gateway/build/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/compile_commands.json
+**/Makefile
+**/*.o
+**/*.a
+**/*.so
+
+# 运行时目录（日志、pid、nginx 生成配置与临时文件）
+.run/
+
+# 应用日志
+*.log
+
+# Python 缓存
+**/__pycache__/
+*.py[cod]
+
+# IDE / 编辑器
+.vscode/
+**/.clangd
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*~

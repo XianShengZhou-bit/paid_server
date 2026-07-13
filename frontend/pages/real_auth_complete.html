@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>实名补全</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 680px;
+        margin: 24px auto;
+        padding: 0 12px;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+      }
+      .field {
+        margin-bottom: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      .error {
+        color: #c62828;
+      }
+      .ok {
+        color: #2e7d32;
+      }
+      button {
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>页面 C：实名补全</h1>
+    <div id="status" class="card">请填写邮箱和身份证号。</div>
+    <form id="form" class="card" style="margin-top: 12px">
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input id="email" type="email" placeholder="请输入邮箱" required />
+      </div>
+      <div class="field">
+        <label for="idCard">身份证号</label>
+        <input id="idCard" type="text" placeholder="请输入身份证号" required />
+      </div>
+      <button type="submit">提交实名信息</button>
+    </form>
+
+    <script type="module">
+      import { postJson, ApiError } from "/common/api.js";
+
+      const params = new URLSearchParams(window.location.search);
+      const returnUrl = params.get("return_url") || "/payment/confirm";
+      const statusEl = document.getElementById("status");
+      const form = document.getElementById("form");
+
+      if (!params.get("return_url")) {
+        setStatus("未指定 return_url，实名成功后将回到订单确认页（请带上 order_sn 访问）。", "");
+      }
+
+      function setStatus(text, className = "") {
+        statusEl.className = `card ${className}`.trim();
+        statusEl.textContent = text;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const email = document.getElementById("email").value.trim();
+        const idCard = document.getElementById("idCard").value.trim();
+        if (!email || !idCard) {
+          setStatus("请完整填写邮箱和身份证号。", "error");
+          return;
+        }
+
+        try {
+          const data = await postJson(
+            "/api/users/real-auth/complete",
+            { email, id_card: idCard, return_url: returnUrl },
+            true
+          );
+          const redirect = data.redirect_url || returnUrl;
+          setStatus("实名成功，正在跳转...", "ok");
+          window.location.href = redirect;
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 40101) {
+            setStatus("登录态无效，跳转到登录页...", "error");
+            const target = `/login?return_url=${encodeURIComponent(returnUrl)}`;
+            window.location.href = target;
+            return;
+          }
+          setStatus(`提交失败：${error.message}`, "error");
+        }
+      });
+    </script>
+  </body>
+</html>
+

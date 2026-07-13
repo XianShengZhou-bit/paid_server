@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 680px;
+        margin: 24px auto;
+        padding: 0 12px;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      .field {
+        margin-bottom: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      .error {
+        color: #c62828;
+      }
+      .ok {
+        color: #2e7d32;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>登录</h1>
+    <div id="status" class="card">请输入用户名和密码。</div>
+
+    <form id="form" class="card">
+      <div class="field">
+        <label for="username">用户名</label>
+        <input id="username" type="text" placeholder="请输入 username" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input id="password" type="password" placeholder="请输入 password" required />
+      </div>
+      <button type="submit">登录</button>
+    </form>
+
+    <script type="module">
+      import { postJson, ApiError } from "/common/api.js";
+
+      const params = new URLSearchParams(window.location.search);
+      const returnUrl = params.get("return_url") || "/payment/confirm";
+
+      const statusEl = document.getElementById("status");
+      const form = document.getElementById("form");
+      const usernameEl = document.getElementById("username");
+      const passwordEl = document.getElementById("password");
+
+      function setStatus(text, className = "") {
+        statusEl.className = `card ${className}`.trim();
+        statusEl.textContent = text;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const username = usernameEl.value.trim();
+        const password = passwordEl.value.trim();
+        if (!username || !password) {
+          setStatus("用户名和密码不能为空。", "error");
+          return;
+        }
+
+        try {
+          await postJson("/api/auth/login", { username, password }, true);
+          setStatus("登录成功，正在跳转...", "ok");
+          window.location.href = returnUrl;
+        } catch (error) {
+          if (error instanceof ApiError) {
+            setStatus(`登录失败：${error.message}`, "error");
+            return;
+          }
+          setStatus("登录失败，请稍后重试。", "error");
+        }
+      });
+    </script>
+  </body>
+</html>
+

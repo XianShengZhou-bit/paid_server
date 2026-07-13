@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>扫码支付</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 680px;
+        margin: 24px auto;
+        padding: 0 12px;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      input {
+        width: 100%;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 8px 14px;
+        margin-top: 10px;
+        cursor: pointer;
+      }
+      .error {
+        color: #c62828;
+      }
+      .ok {
+        color: #2e7d32;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>页面 B：扫码支付</h1>
+    <div id="status" class="card">初始化中...</div>
+    <div class="card">
+      <h3>支付信息</h3>
+      <pre id="pageData">-</pre>
+    </div>
+    <div class="card">
+      <label for="loginPassword">登录密码</label>
+      <input id="loginPassword" type="password" placeholder="请输入登录密码" />
+      <button id="payBtn">确认支付</button>
+    </div>
+
+    <script type="module">
+      import { getJson, postJson } from "/common/api.js";
+
+      const statusEl = document.getElementById("status");
+      const pageDataEl = document.getElementById("pageData");
+      const payBtn = document.getElementById("payBtn");
+      const loginPasswordEl = document.getElementById("loginPassword");
+
+      const params = new URLSearchParams(window.location.search);
+      const qrToken = params.get("token") || "";
+
+      let requestId = "";
+
+      function setStatus(text, className = "") {
+        statusEl.className = `card ${className}`.trim();
+        statusEl.textContent = text;
+      }
+
+      async function initPage() {
+        if (!qrToken) {
+          setStatus("缺少 token 参数", "error");
+          return;
+        }
+        try {
+          const pageData = await getJson(`/api/payment/page?token=${encodeURIComponent(qrToken)}`, false);
+          pageDataEl.textContent = JSON.stringify(pageData, null, 2);
+          const initData = await postJson("/api/payment/attempt/init", { qr_token: qrToken }, false);
+          requestId = initData.request_id || "";
+          if (!requestId) {
+            setStatus("未获取到 request_id", "error");
+            return;
+          }
+          sessionStorage.setItem(`pay_request_id:${pageData.payment_session_id || ""}`, requestId);
+          setStatus("初始化成功，请输入登录密码完成支付。");
+        } catch (error) {
+          setStatus(`初始化失败：${error.message}`, "error");
+        }
+      }
+
+      payBtn.addEventListener("click", async () => {
+        const loginPassword = loginPasswordEl.value.trim();
+        if (!requestId) {
+          setStatus("request_id 尚未准备好", "error");
+          return;
+        }
+        if (!loginPassword) {
+          setStatus("请输入登录密码", "error");
+          return;
+        }
+
+        try {
+          const data = await postJson(
+            "/api/payment/pay",
+            { request_id: requestId, qr_token: qrToken, login_password: loginPassword },
+            false
+          );
+          if (data.payment_status === "PAID") {
+            setStatus("支付成功", "ok");
+          } else {
+            setStatus(`支付结果：${data.payment_status || "未知"}`);
+          }
+        } catch (error) {
+          setStatus(`支付失败：${error.message}`, "error");
+        }
+      });
+
+      initPage();
+    </script>
+  </body>
+</html>
+

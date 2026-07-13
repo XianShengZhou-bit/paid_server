@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>订单确认</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 760px;
+        margin: 24px auto;
+        padding: 0 12px;
+        line-height: 1.6;
+      }
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      .error {
+        color: #c62828;
+      }
+      .ok {
+        color: #2e7d32;
+      }
+      button {
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      code {
+        word-break: break-all;
+      }
+      #qrSection canvas {
+        display: block;
+        margin: 12px 0;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+      }
+      #qrSection p {
+        margin: 0 0 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>页面 A：订单确认</h1>
+    <div id="status" class="card">加载中...</div>
+    <div class="card">
+      <h3>订单信息</h3>
+      <pre id="orderInfo">-</pre>
+    </div>
+    <div class="card">
+      <label>
+        <input id="agreement" type="checkbox" />
+        我已阅读并同意继续支付
+      </label>
+      <div style="margin-top: 10px">
+        <button id="confirmBtn">继续支付</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>扫码支付</h3>
+      <div id="qrSection">等待 BIND_SUCCESS...</div>
+    </div>
+
+    <script type="module">
+      import { getJson, postJson, ApiError } from "/common/api.js";
+      import { renderQrCode } from "/common/qr_render.js";
+
+      const statusEl = document.getElementById("status");
+      const orderInfoEl = document.getElementById("orderInfo");
+      const qrSectionEl = document.getElementById("qrSection");
+      const agreementEl = document.getElementById("agreement");
+      const confirmBtn = document.getElementById("confirmBtn");
+
+      const params = new URLSearchParams(window.location.search);
+      const orderSn = params.get("order_sn") || "";
+
+      let pendingQrPayload = "";
+      let ws = null;
+
+      function setStatus(text, className = "") {
+        statusEl.className = `card ${className}`.trim();
+        statusEl.textContent = text;
+      }
+
+      function gotoLoginHint() {
+        setStatus("登录态无效，跳转到登录页...", "error");
+        const current = window.location.pathname + window.location.search;
+        const target = `/login?return_url=${encodeURIComponent(current)}`;
+        window.location.href = target;
+      }
+
+      async function loadOrder() {
+        if (!orderSn) {
+          setStatus("缺少 order_sn 参数", "error");
+          return;
+        }
+
+        try {
+          const data = await getJson(`/api/payment/orders/${encodeURIComponent(orderSn)}`, true);
+          orderInfoEl.textContent = JSON.stringify(data, null, 2);
+          setStatus("订单已加载，请勾选声明后继续支付。");
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 40101) {
+            gotoLoginHint();
+            return;
+          }
+          setStatus(`加载订单失败：${error.message}`, "error");
+        }
+      }
+
+      function connectWebSocket(url) {
+        ws = new WebSocket(url);
+        ws.onopen = () => setStatus("WebSocket 已连接，等待绑定结果...");
+        ws.onerror = () => setStatus("WebSocket 连接异常", "error");
+        ws.onclose = (event) => {
+          if (event.code === 1000) {
+            return;
+          }
+          setStatus(`WebSocket 已断开 (code=${event.code})`, "error");
+        };
+        ws.onmessage = (event) => {
+          let message;
+          try {
+            message = JSON.parse(event.data);
+          } catch (_) {
+            return;
+          }
+
+          if (message.type === "BIND_SUCCESS") {
+            setStatus("绑定成功，已展示二维码。", "ok");
+            renderQrCode(qrSectionEl, pendingQrPayload).catch((error) => {
+              setStatus(`二维码渲染失败：${error.message}`, "error");
+              qrSectionEl.innerHTML = `<code>${pendingQrPayload}</code>`;
+            });
+            return;
+          }
+
+          if (message.type === "PAYMENT_RESULT") {
+            const paid = message.payment_status === "PAID";
+            setStatus(
+              paid
+                ? `支付成功：订单 ${message.order_sn || "-"}`
+                : `支付结果：${message.message || "未知"}`,
+              paid ? "ok" : "error"
+            );
+          }
+        };
+      }
+
+      confirmBtn.addEventListener("click", async () => {
+        if (!agreementEl.checked) {
+          setStatus("请先勾选声明。", "error");
+          return;
+        }
+
+        try {
+          const data = await postJson(
+            "/api/payment/confirm",
+            { order_sn: orderSn, agreement_checked: true },
+            true
+          );
+
+          pendingQrPayload = data.qr_payload || "";
+          if (!data.websocket_url) {
+            setStatus("后端未返回 websocket_url", "error");
+            return;
+          }
+
+          if (ws) {
+            ws.close();
+          }
+          connectWebSocket(data.websocket_url);
+          setStatus("继续支付成功，正在建立 WebSocket...");
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 40910) {
+            const returnUrl = `/payment/confirm?order_sn=${encodeURIComponent(orderSn)}`;
+            const target = `/user/real-auth/complete?return_url=${encodeURIComponent(returnUrl)}`;
+            window.location.href = target;
+            return;
+          }
+          if (error instanceof ApiError && error.code === 40101) {
+            gotoLoginHint();
+            return;
+          }
+          setStatus(`继续支付失败：${error.message}`, "error");
+        }
+      });
+
+      loadOrder();
+    </script>
+  </body>
+</html>
+

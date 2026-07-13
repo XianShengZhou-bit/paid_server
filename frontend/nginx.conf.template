@@ -1,0 +1,104 @@
+worker_processes 1;
+error_log @ERROR_LOG@ info;
+pid @ROOT_DIR@/.run/pids/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # WebSocket 反代必需：按 Upgrade 头切换 Connection
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ''      close;
+    }
+
+    log_format frontend '$remote_addr - $request_method $request_uri -> $status '
+                        '($request_time s, bytes=$body_bytes_sent) "$http_user_agent"';
+    access_log @ACCESS_LOG@ frontend;
+
+    client_body_temp_path @ROOT_DIR@/.run/nginx/temp/client_body;
+    proxy_temp_path @ROOT_DIR@/.run/nginx/temp/proxy;
+    fastcgi_temp_path @ROOT_DIR@/.run/nginx/temp/fastcgi;
+    uwsgi_temp_path @ROOT_DIR@/.run/nginx/temp/uwsgi;
+    scgi_temp_path @ROOT_DIR@/.run/nginx/temp/scgi;
+
+    server {
+        listen @PORT@;
+        listen [::]:@PORT@;
+        server_name _;
+
+        location = / {
+            default_type text/html;
+            charset utf-8;
+            root @ROOT_DIR@/frontend/pages;
+            index payment_confirm.html;
+        }
+
+        location = /payment/confirm {
+            default_type text/html;
+            charset utf-8;
+            root @ROOT_DIR@/frontend/pages;
+            try_files /payment_confirm.html =404;
+        }
+
+        location = /payment/scan {
+            default_type text/html;
+            charset utf-8;
+            alias @ROOT_DIR@/frontend/pages/payment_scan.html;
+        }
+
+        location = /login {
+            default_type text/html;
+            charset utf-8;
+            alias @ROOT_DIR@/frontend/pages/login.html;
+        }
+
+        location = /user/real-auth/complete {
+            default_type text/html;
+            charset utf-8;
+            alias @ROOT_DIR@/frontend/pages/real_auth_complete.html;
+        }
+
+        location /common/ {
+            alias @ROOT_DIR@/frontend/common/;
+        }
+
+        location /pages/ {
+            alias @ROOT_DIR@/frontend/pages/;
+        }
+
+        # API 统一经 Nginx 反代到网关 HTTP
+        location /api/ {
+            proxy_pass http://@GATEWAY_HTTP_UPSTREAM@;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # WebSocket 统一经 Nginx 反代到网关 WS
+        location /ws/ {
+            proxy_pass http://@GATEWAY_WS_UPSTREAM@;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+
+        location / {
+            default_type application/json;
+            charset utf-8;
+            return 404 '{"code":404,"message":"Not Found"}';
+        }
+    }
+}
