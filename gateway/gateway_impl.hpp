@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cctype>
+#include <exception>
 #include <map>
 #include <string>
 #include <utility>
@@ -12,8 +13,6 @@
 #include "config.hpp"
 #include "http_forwarder.hpp"
 #include "logger.hpp"
-#include "mysql_pool.hpp"
-#include "password_verifier.hpp"
 #include "session_store.hpp"
 #include "ws_registry.hpp"
 
@@ -117,7 +116,8 @@ inline bool requiresAuth(const std::string& method, const std::string& path) {
 // review
 // 判断是否要将该请求转发给后端
 inline bool isForwardApi(const std::string& path) {
-    return path.rfind("/api/payment/", 0) == 0 || path == "/api/users/real-auth/complete";
+    return path.rfind("/api/payment/", 0) == 0 || path.rfind("/api/auth/", 0) == 0 ||
+           path == "/api/users/real-auth/complete";
 }
 
 inline gateway_forward::HttpRequest toForwardRequest(const HttpRequest& request) {
@@ -130,60 +130,11 @@ inline gateway_forward::HttpRequest toForwardRequest(const HttpRequest& request)
     if (!content_type.empty()) {
         forward.headers["Content-Type"] = content_type;
     }
+    const std::string cookie = headerValue(request, "Cookie");
+    if (!cookie.empty()) {
+        forward.headers["Cookie"] = cookie;
+    }
     return forward;
-}
-
-// review
-inline HttpResponse handleLogin(const HttpRequest& request) {
-    json body;
-    try {
-        body = json::parse(request.body);
-    } catch (...) {
-        LOG_WARN("登录失败: 请求体不是合法 JSON, client_ip={}", request.client_ip);
-        return respondJson(400, makeErr(40001, "请求体不是合法 JSON"));
-    }
-
-    const std::string username = body.value("username", "");
-    const std::string password = body.value("password", "");
-    if (username.empty() || password.empty()) {
-        LOG_WARN("登录失败: username 或 password 为空, client_ip={}", request.client_ip);
-        return respondJson(400, makeErr(40001, "username 或 password 不能为空"));
-    }
-
-    LOG_INFO("登录请求: username={}, client_ip={}", username, request.client_ip);
-
-    auto& pool = payment_mysql::MySqlPool::instance();
-    const auto user = pool.getUserByUsername(username);
-    if (!user.has_value() || !user->isNormal()) {
-        LOG_WARN("登录失败: 用户不存在或已失效, username={}", username);
-        return respondJson(404, makeErr(40403, "用户失效"));
-    }
-
-    const auto hash_cfg = payment_config::Config::instance().passwordHash();
-    if (!payment_security::PasswordVerifier::verifyLoginPasswordWithHash(password, user->password_hash,
-                                                                         hash_cfg.secret)) {
-        LOG_WARN("登录失败: 密码错误, username={}", username);
-        return respondJson(401, makeErr(40104, "密码错误"));
-    }
-
-    const std::string session_id = gateway_session::SessionStore::instance().create(user->user_id);
-    LOG_INFO("登录成功: username={}, user_id={}", username, user->user_id);
-    HttpResponse response = respondJson(200, makeOk(json{{"user_id", user->user_id}}));
-    response.extra_headers.push_back({"Set-Cookie", "session_id=" + session_id + "; Path=/; HttpOnly; SameSite=Lax"});
-    return response;
-}
-
-// review
-inline HttpResponse handleLogout(const HttpRequest& request) {
-    LOG_INFO("开始登出: client_ip={}", request.client_ip);
-    const std::string session_id = cookieValue(headerValue(request, "Cookie"), "session_id");
-    if (!session_id.empty()) {
-        gateway_session::SessionStore::instance().remove(session_id);
-    }
-    HttpResponse response = respondJson(200, makeOk());
-    response.extra_headers.push_back({"Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"});
-    LOG_INFO("登出成功: client_ip={}", request.client_ip);
-    return response;
 }
 
 // review
@@ -232,7 +183,7 @@ inline HttpResponse forwardRequest(const HttpRequest& request, const std::string
     LOG_INFO("开始转发后端: {} {} user_id={}", request.method, request.path, user_id.empty() ? "(none)" : user_id);
     const gateway_forward::HttpResponse backend = gateway_forward::forwardToBackend(toForwardRequest(request), user_id);
     LOG_INFO("转发后端完成: {} {} -> http {}", request.method, request.path, backend.status);
-    return HttpResponse{backend.status, backend.body, {}};
+    return HttpResponse{backend.status, backend.body, backend.extra_headers};
 }
 
 // review
@@ -245,11 +196,7 @@ inline HttpResponse handleRequest(const HttpRequest& request) {
     }
 
     HttpResponse response;
-    if (request.method == "POST" && request.path == "/api/auth/login") {
-        response = handleLogin(request);
-    } else if (request.method == "POST" && request.path == "/api/auth/logout") {
-        response = handleLogout(request);
-    } else if (request.method == "POST" && request.path == "/internal/payment/result") {
+    if (request.method == "POST" && request.path == "/internal/payment/result") {
         response = handlePaymentResult(request);
     } else if (!isForwardApi(request.path)) {
         LOG_WARN("请求处理失败: 接口不存在, {} {}", request.method, request.path);
@@ -262,13 +209,18 @@ inline HttpResponse handleRequest(const HttpRequest& request) {
                 LOG_WARN("请求处理失败: 缺少 session_id, {} {}", request.method, request.path);
                 response = respondJson(401, makeErr(40101, "登录态无效"));
             } else {
-                const auto uid = gateway_session::SessionStore::instance().userIdOf(session_id);
-                if (!uid.has_value()) {
-                    LOG_WARN("请求处理失败: session 无效, {} {}", request.method, request.path);
-                    response = respondJson(401, makeErr(40101, "登录态无效"));
-                } else {
-                    user_id = *uid;
-                    response = forwardRequest(request, user_id);
+                try {
+                    const auto uid = gateway_session::SessionStore::instance().userIdOf(session_id);
+                    if (!uid.has_value()) {
+                        LOG_WARN("请求处理失败: session 无效, {} {}", request.method, request.path);
+                        response = respondJson(401, makeErr(40101, "登录态无效"));
+                    } else {
+                        user_id = *uid;
+                        response = forwardRequest(request, user_id);
+                    }
+                } catch (const std::exception& ex) {
+                    LOG_ERROR("Redis 鉴权失败: {} {}, error={}", request.method, request.path, ex.what());
+                    response = respondJson(503, makeErr(50002, "登录态服务暂不可用"));
                 }
             }
         } else {

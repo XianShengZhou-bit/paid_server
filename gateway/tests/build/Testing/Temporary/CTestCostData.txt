@@ -1,0 +1,19 @@
+GatewayRoutingTest.RequiresAuthForProtectedRoutes 4 0.00311251
+GatewayRoutingTest.IsForwardApiAcceptsKnownPrefixes 4 0.00264702
+GatewayRoutingTest.CookieValueParsesSessionId 4 0.00261597
+GatewayWsHelpersTest.QueryParamParsesPaymentSessionId 4 0.00247455
+GatewayWsHelpersTest.MakeAcceptKeyMatchesRfc6455Sample 4 0.00320143
+GatewaySessionStoreTest.UserIdOfExistingSession 4 0.00369626
+GatewaySessionStoreTest.UserIdOfMissingSessionReturnsNullopt 4 0.00335836
+GatewayPaymentResultTest.RejectsNonBackendIp 4 0.00285871
+GatewayPaymentResultTest.RejectsInvalidJson 4 0.00287284
+GatewayPaymentResultTest.RejectsEmptyPaymentSessionId 4 0.00301969
+GatewayPaymentResultTest.FailsWhenNoWebSocketBound 4 0.00325709
+GatewayPaymentResultTest.PushesPaymentResultToBoundSocket 4 0.00289965
+GatewayHandleRequestTest.RejectsUnknownClientIp 4 0.00358922
+GatewayHandleRequestTest.RejectsUnknownPath 4 0.00334264
+GatewayHandleRequestTest.AuthRouteRejectsMissingCookie 4 0.00310853
+GatewayHandleRequestTest.AuthRouteRejectsInvalidSession 4 0.00338784
+GatewayHandleRequestTest.AuthRouteForwardsWhenSessionValid 4 0.00417468
+GatewayHandleRequestTest.InternalPaymentResultRequiresBackendIp 1 0.0127367
+---

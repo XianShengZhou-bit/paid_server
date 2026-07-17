@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: game_account_exchange
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake libssl-dev libmysqlclient-dev \
+            libspdlog-dev nlohmann-json3-dev libhiredis-dev \
+            mysql-client redis-tools
+
+      - name: Configure test environment
+        run: cp .env.test .env.ci
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready in time" >&2
+          exit 1
+
+      - name: Wait for Redis
+        run: |
+          for i in $(seq 1 30); do
+            if redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Redis did not become ready in time" >&2
+          exit 1
+
+      - name: Build gateway
+        run: |
+          cmake -S gateway -B gateway/build
+          cmake --build gateway/build -j"$(nproc)"
+
+      - name: Build backend
+        run: |
+          cmake -S backend -B backend/build
+          cmake --build backend/build -j"$(nproc)"
+
+      - name: Build and configure backend tests
+        run: |
+          cmake -S backend/tests -B backend/tests/build \
+            -DPAYMENT_TEST_ENV_FILE="${{ github.workspace }}/.env.ci"
+          cmake --build backend/tests/build -j"$(nproc)"
+
+      - name: Build and configure gateway tests
+        run: |
+          cmake -S gateway/tests -B gateway/tests/build \
+            -DPAYMENT_TEST_ENV_FILE="${{ github.workspace }}/.env.ci"
+          cmake --build gateway/tests/build -j"$(nproc)"
+
+      - name: Initialize database schema and seed data
+        env:
+          PAYMENT_ENV_FILE: ${{ github.workspace }}/.env.ci
+        run: bash sql_create_and_add/setup_mysql_test_data.sh
+
+      - name: Initialize Redis ACL for tests
+        run: |
+          # 与 .env.test 中 REDIS_BACKEND_* / REDIS_GATEWAY_* 一致
+          redis-cli -h 127.0.0.1 -p 6379 ACL DELUSER payment_backend_test >/dev/null || true
+          redis-cli -h 127.0.0.1 -p 6379 ACL SETUSER payment_backend_test on \
+            '>test_backend_redis_password' \
+            '~payment:session:*' +ping +select +get +set +del +exists
+          redis-cli -h 127.0.0.1 -p 6379 ACL DELUSER payment_gateway_test >/dev/null || true
+          redis-cli -h 127.0.0.1 -p 6379 ACL SETUSER payment_gateway_test on \
+            '>test_gateway_redis_password' \
+            '~payment:session:*' +ping +select +get
+
+      - name: Run backend tests
+        run: ctest --test-dir backend/tests/build --output-on-failure
+
+      - name: Run gateway tests
+        run: ctest --test-dir gateway/tests/build --output-on-failure

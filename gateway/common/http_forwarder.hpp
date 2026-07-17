@@ -11,6 +11,8 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "config.hpp"
 #include "logger.hpp"
@@ -28,6 +30,7 @@ struct HttpRequest {
 struct HttpResponse {
     int status = 500;
     std::string body;
+    std::vector<std::pair<std::string, std::string>> extra_headers;
 };
 
 // review
@@ -137,6 +140,8 @@ inline bool readHttpResponse(int fd, HttpResponse& response) {
         }
         if (key == "Content-Length") {
             content_length = static_cast<std::size_t>(std::stoul(value));
+        } else if (key == "Set-Cookie") {
+            response.extra_headers.push_back({key, value});
         }
     }
 
@@ -175,6 +180,11 @@ inline HttpResponse forwardToBackend(const HttpRequest& request, const std::stri
         oss << "Content-Type: " << content_type_it->second << "\r\n";
     } else if (!request.body.empty()) {
         oss << "Content-Type: application/json\r\n"; // 兜底，用JSON解析
+    }
+
+    const auto cookie_it = request.headers.find("Cookie");
+    if (cookie_it != request.headers.end() && !cookie_it->second.empty()) {
+        oss << "Cookie: " << cookie_it->second << "\r\n";
     }
 
     if (!request.body.empty()) {

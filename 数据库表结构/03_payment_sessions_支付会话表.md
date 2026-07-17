@@ -1,17 +1,17 @@
 ### 支付服务表：`payment_sessions` (支付会话表)
 
-| 字段名                  | 数据类型         | 约束                  | 默认值                                             | 索引      | 描述                                                |
-| :------------------- | :----------- | :------------------ | :---------------------------------------------- | :------ | :------------------------------------------------ |
-| `id`                 | BIGINT       | PK, AUTO\_INCREMENT | -                                               | PRIMARY | 支付会话内部主键                                          |
-| `payment_session_id` | VARCHAR(64)  | UNIQUE, NOT NULL    | -                                               | UNIQUE  | 支付会话 ID，用于串联页面 A、二维码、页面 B、WebSocket 推送            |
-| `order_sn`           | VARCHAR(64)  | UNIQUE, NOT NULL    | -                                               | UNIQUE  | 关联订单号。当前版本设计为同一订单只允许存在一个支付会话                      |
-| `account_id`         | VARCHAR(64)  | NOT NULL            | -                                               | -       | 关联游戏账号 ID                                         |
-| `buyer_id`           | VARCHAR(64)  | NOT NULL            | -                                               | -       | 购买者用户 ID                                         |
-| `buyer_email`        | VARCHAR(64)  | NOT NULL            | -                                               | -       | 买家邮箱，仅用于会话信息记录和排查，不作为 WebSocket 主路由键             |
-| `status`             | TINYINT      | NOT NULL            | 0                                               | 联合索引    | 支付会话状态：0-待支付，1-已支付，2-已失效，3-已过期                    |
-| `expire_at`          | DATETIME     | NOT NULL            | -                                               | 联合索引    | 支付会话过期时间                                          |
-| `created_at`         | DATETIME     | NOT NULL            | CURRENT\_TIMESTAMP                              | -       | 支付会话创建时间                                          |
-| `updated_at`         | DATETIME     | NOT NULL            | CURRENT\_TIMESTAMP ON UPDATE CURRENT\_TIMESTAMP | -       | 支付会话更新时间                                          |
+| 字段名               | 数据类型    | 约束               | 默认值                                        | 索引     | 描述                                                          |
+| :------------------- | :---------- | :----------------- | :-------------------------------------------- | :------- | :------------------------------------------------------------ |
+| `id`                 | BIGINT      | PK, AUTO_INCREMENT | -                                             | PRIMARY  | 支付会话内部主键                                              |
+| `payment_session_id` | VARCHAR(64) | UNIQUE, NOT NULL   | -                                             | UNIQUE   | 支付会话 ID，用于串联页面 A、二维码、页面 B、WebSocket 推送   |
+| `order_sn`           | VARCHAR(64) | UNIQUE, NOT NULL   | -                                             | UNIQUE   | 关联订单号。当前版本设计为同一订单只允许存在一个支付会话      |
+| `account_id`         | VARCHAR(64) | NOT NULL           | -                                             | -        | 关联游戏账号 ID 7                                             |
+| `buyer_id`           | VARCHAR(64) | NOT NULL           | -                                             | -        | 购买者用户 ID                                                 |
+| `buyer_email`        | VARCHAR(64) | NOT NULL           | -                                             | -        | 买家邮箱，仅用于会话信息记录和排查，不作为 WebSocket 主路由键 |
+| `status`             | TINYINT     | NOT NULL           | 0                                             | 联合索引 | 支付会话状态：0-待支付，1-已支付，2-已失效，3-已过期          |
+| `expire_at`          | DATETIME    | NOT NULL           | -                                             | 联合索引 | 支付会话过期时间                                              |
+| `created_at`         | DATETIME    | NOT NULL           | CURRENT_TIMESTAMP                             | -        | 支付会话创建时间                                              |
+| `updated_at`         | DATETIME    | NOT NULL           | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | -        | 支付会话更新时间                                              |
 
 **索引设计：**
 
@@ -43,4 +43,3 @@
 - 页面 B 扫码后提交的 `qr_token` 必须通过 JWT 验签，然后再通过 `payment_session_id` 查询支付会话。
 - 支付成功时必须将 `payment_sessions.status` 从 `0` 更新为 `1`。
 - 支付会话过期后必须拒绝继续支付。
-

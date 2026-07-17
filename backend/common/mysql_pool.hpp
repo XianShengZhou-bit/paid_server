@@ -341,6 +341,19 @@ class MySqlPool {
         return parseUser(rows[0]);
     }
 
+    // 通过用户名获取用户信息，供后端登录接口校验账号密码。
+    std::optional<UserInfo> getUserByUsername(const std::string& username) {
+        auto guard = acquire();
+
+        const std::string sql =
+            userSelectColumns() + " FROM users WHERE username='" + escape(guard.get(), username) + "' LIMIT 1";
+        auto rows = queryRows(guard.get(), sql);
+        if (rows.empty()) {
+            return std::nullopt;
+        }
+        return parseUser(rows[0]);
+    }
+
     // review
     // 判断用户是否已完成邮箱号和身份证号实名认证
     bool isUserRealAuthCompleted(const std::string& user_id) {

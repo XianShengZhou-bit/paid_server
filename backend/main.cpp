@@ -14,6 +14,7 @@
 #include "logger.hpp"
 #include "mysql_pool.hpp"
 #include "payment_impl.hpp"
+#include "redis_pool.hpp"
 
 namespace {
 
@@ -115,6 +116,9 @@ void writeHttpResponse(int client_fd, const payment_impl::HttpResponse& response
     std::ostringstream oss;
     oss << "HTTP/1.1 " << response.http_status << " OK\r\n";
     oss << "Content-Type: application/json; charset=utf-8\r\n";
+    for (const auto& header : response.extra_headers) {
+        oss << header.first << ": " << header.second << "\r\n";
+    }
     oss << "Content-Length: " << body.size() << "\r\n";
     oss << "Connection: close\r\n\r\n";
     oss << body;
@@ -150,6 +154,8 @@ int main(int argc, char** argv) {
         LOG_INFO("日志系统初始化完成: file={}", logger_config.file);
         payment_mysql::MySqlPool::instance().initFromConfig();
         LOG_INFO("MySQL 连接池初始化完成");
+        payment_redis::RedisPool::instance().initFromConfig();
+        LOG_INFO("Redis 读写连接池初始化完成");
 
         const auto backend = config.paymentBackend();
         const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);

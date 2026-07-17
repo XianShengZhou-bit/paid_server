@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_FILE="${ROOT_DIR}/.env"
+ENV_FILE="${PAYMENT_ENV_FILE:-${ROOT_DIR}/.env}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "未找到 .env 文件: ${ENV_FILE}" >&2

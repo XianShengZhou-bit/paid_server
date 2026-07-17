@@ -15,7 +15,7 @@
 #include "config.hpp"
 #include "gateway_impl.hpp"
 #include "logger.hpp"
-#include "mysql_pool.hpp"
+#include "session_store.hpp"
 #include "ws_registry.hpp"
 
 namespace {
@@ -272,8 +272,7 @@ int main(int argc, char** argv) {
                                            logger_config.max_files, logger_config.console_enabled);
         LOG_INFO("开始启动 payment gateway, env={}", env_path);
         LOG_INFO("日志系统初始化完成: file={}", logger_config.file);
-        payment_mysql::MySqlPool::instance().initFromConfig();
-        LOG_INFO("MySQL 连接池初始化完成");
+        gateway_session::SessionStore::instance().initFromConfig();
 
         const auto gateway = config.paymentGateway();
         LOG_INFO("启动 gateway 服务: http=0.0.0.0:{}, websocket=0.0.0.0:{}", gateway.http_port, gateway.websocket_port);

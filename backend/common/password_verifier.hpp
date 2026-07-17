@@ -28,7 +28,6 @@ class PasswordVerifier {
         return constantTimeEqual(hashLoginPassword(plain_password, secret), password_hash);
     }
 
-  private:
     // review
     static std::string hashLoginPassword(const std::string& plain_password, const std::string& secret) {
         if (plain_password.empty() || secret.empty()) {
@@ -37,6 +36,7 @@ class PasswordVerifier {
         return hmacSha256Hex(plain_password, secret);
     }
 
+  private:
     // review
     static bool constantTimeEqual(const std::string& a, const std::string& b) {
         if (a.size() != b.size()) {

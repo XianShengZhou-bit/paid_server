@@ -22,6 +22,7 @@
 #include "logger.hpp"
 #include "mysql_pool.hpp"
 #include "password_verifier.hpp"
+#include "redis_pool.hpp"
 
 namespace payment_impl {
 
@@ -40,6 +41,7 @@ struct HttpRequest {
 struct HttpResponse {
     int http_status = 200;
     json envelope = json::object();
+    std::vector<std::pair<std::string, std::string>> extra_headers;
 };
 
 // review
@@ -58,6 +60,35 @@ inline std::string headerValue(const HttpRequest& req, const std::string& name) 
         if (toLower(item.first) == key) {
             return item.second;
         }
+    }
+    return "";
+}
+
+// review
+// 从 Cookie 请求头中读取指定键。
+inline std::string cookieValue(const std::string& cookie_header, const std::string& name) {
+    std::size_t pos = 0;
+    while (pos < cookie_header.size()) {
+        const std::size_t semi = cookie_header.find(';', pos);
+        const std::string part = cookie_header.substr(pos, semi == std::string::npos ? std::string::npos : semi - pos);
+        const std::size_t eq = part.find('=');
+        if (eq != std::string::npos) {
+            std::string key = part.substr(0, eq);
+            std::string value = part.substr(eq + 1);
+            while (!key.empty() && key.front() == ' ') {
+                key.erase(key.begin());
+            }
+            while (!value.empty() && value.front() == ' ') {
+                value.erase(value.begin());
+            }
+            if (key == name) {
+                return value;
+            }
+        }
+        if (semi == std::string::npos) {
+            break;
+        }
+        pos = semi + 1;
     }
     return "";
 }
@@ -125,9 +156,8 @@ inline std::string makeRequestId() {
 }
 
 // review
-inline bool accountPayable(int status) {
-    using payment_mysql::AccountStatus;
-    return status == static_cast<int>(AccountStatus::OnSale) || status == static_cast<int>(AccountStatus::Trading);
+inline std::string makeLoginSessionId() {
+    return "SID" + randomHex(32);
 }
 
 // review
@@ -143,6 +173,69 @@ inline bool parseJsonBody(const HttpRequest& req, json& out, std::string& error)
         error = ex.what();
         return false;
     }
+}
+
+// review
+inline HttpResponse handleLogin(const HttpRequest& req) {
+    json body;
+    std::string parse_error;
+    if (!parseJsonBody(req, body, parse_error)) {
+        LOG_WARN("登录失败: 请求体不是合法 JSON");
+        return respond(400, makeErr(40001, "请求体不是合法 JSON"));
+    }
+
+    const std::string username = body.value("username", "");
+    const std::string password = body.value("password", "");
+    if (username.empty() || password.empty()) {
+        LOG_WARN("登录失败: username 或 password 为空");
+        return respond(400, makeErr(40001, "username 或 password 不能为空"));
+    }
+
+    LOG_INFO("登录请求: username={}", username);
+    auto& mysql = payment_mysql::MySqlPool::instance();
+    const auto user = mysql.getUserByUsername(username);
+    if (!user.has_value() || !user->isNormal()) {
+        LOG_WARN("登录失败: 用户不存在或状态不正常, username={}", username);
+        return respond(404, makeErr(40403, "用户失效"));
+    }
+
+    const auto hash_cfg = payment_config::Config::instance().passwordHash();
+    if (!payment_security::PasswordVerifier::verifyLoginPasswordWithHash(password, user->password_hash,
+                                                                         hash_cfg.secret)) {
+        LOG_WARN("登录失败: 密码错误, username={}", username);
+        return respond(401, makeErr(40104, "密码错误"));
+    }
+
+    const std::string session_id = makeLoginSessionId();
+    const int ttl_seconds = payment_config::Config::instance().runtime().login_session_ttl_seconds;
+    if (!payment_redis::RedisPool::instance().saveSession(session_id, user->user_id, ttl_seconds)) {
+        LOG_ERROR("登录失败: Redis 会话写入失败, user_id={}", user->user_id);
+        return respond(500, makeErr(50001, "创建登录会话失败"));
+    }
+
+    HttpResponse response = respond(200, makeOk(json{{"user_id", user->user_id}}));
+    response.extra_headers.push_back({"Set-Cookie", "session_id=" + session_id + "; Path=/; HttpOnly; SameSite=Lax"});
+    LOG_INFO("登录成功: username={}, user_id={}", username, user->user_id);
+    return response;
+}
+
+// review
+inline HttpResponse handleLogout(const HttpRequest& req) {
+    const std::string session_id = cookieValue(headerValue(req, "Cookie"), "session_id");
+    if (!session_id.empty()) {
+        payment_redis::RedisPool::instance().removeSession(session_id);
+    }
+
+    HttpResponse response = respond(200, makeOk());
+    response.extra_headers.push_back({"Set-Cookie", "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"});
+    LOG_INFO("登出成功");
+    return response;
+}
+
+// review
+inline bool accountPayable(int status) {
+    using payment_mysql::AccountStatus;
+    return status == static_cast<int>(AccountStatus::OnSale) || status == static_cast<int>(AccountStatus::Trading);
 }
 
 // review
@@ -559,7 +652,11 @@ inline HttpResponse handleRequest(const HttpRequest& req) {
     LOG_INFO("开始处理请求: {} {}", req.method, req.path);
     try {
         HttpResponse response;
-        if (req.method == "GET" && req.path.rfind("/api/payment/orders/", 0) == 0) {
+        if (req.method == "POST" && req.path == "/api/auth/login") {
+            response = handleLogin(req);
+        } else if (req.method == "POST" && req.path == "/api/auth/logout") {
+            response = handleLogout(req);
+        } else if (req.method == "GET" && req.path.rfind("/api/payment/orders/", 0) == 0) {
             response = handleGetOrder(req);
         } else if (req.method == "POST" && req.path == "/api/payment/confirm") {
             response = handleConfirm(req);

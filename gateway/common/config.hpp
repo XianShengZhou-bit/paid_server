@@ -18,20 +18,15 @@ class ConfigException : public std::runtime_error {
     explicit ConfigException(const std::string& message) : std::runtime_error(message) {}
 };
 
-struct MySqlConfig {
+struct RedisConfig {
     std::string host;
     int port;
-    std::string user;
+    int db;
+    std::string username;
     std::string password;
-    std::string database;
     unsigned int connect_timeout_seconds;
-    unsigned int read_timeout_seconds;
-    unsigned int write_timeout_seconds;
+    unsigned int command_timeout_seconds;
     int pool_size;
-};
-
-struct PasswordHashConfig {
-    std::string secret;
 };
 
 struct PaymentBackendConfig {
@@ -102,20 +97,6 @@ class Config {
         }
     }
 
-    MySqlConfig mysql() const {
-        MySqlConfig cfg;
-        cfg.host = requireString("MYSQL_HOST");
-        cfg.port = requireInt("MYSQL_PORT");
-        cfg.user = requireString("MYSQL_USER");
-        cfg.password = requireString("MYSQL_PASSWORD");
-        cfg.database = requireString("MYSQL_DATABASE");
-        cfg.connect_timeout_seconds = requireInt("MYSQL_CONNECT_TIMEOUT_SECONDS");
-        cfg.read_timeout_seconds = requireInt("MYSQL_READ_TIMEOUT_SECONDS");
-        cfg.write_timeout_seconds = requireInt("MYSQL_WRITE_TIMEOUT_SECONDS");
-        cfg.pool_size = requireInt("MYSQL_POOL_SIZE");
-        return cfg;
-    }
-
     LoggerConfig logger() const {
         LoggerConfig cfg;
         cfg.file = requireString("LOG_FILE");
@@ -125,9 +106,23 @@ class Config {
         return cfg;
     }
 
-    PasswordHashConfig passwordHash() const {
-        PasswordHashConfig cfg;
-        cfg.secret = requireString("PASSWORD_HASH_SECRET");
+    RedisConfig redis() const {
+        RedisConfig cfg;
+        cfg.host = requireString("REDIS_HOST");
+        cfg.port = requireInt("REDIS_PORT");
+        cfg.db = requireInt("REDIS_DB");
+        cfg.username = requireString("REDIS_GATEWAY_USERNAME");
+        cfg.password = requireString("REDIS_GATEWAY_PASSWORD");
+        cfg.connect_timeout_seconds = requireInt("REDIS_CONNECT_TIMEOUT_SECONDS");
+        cfg.command_timeout_seconds = requireInt("REDIS_COMMAND_TIMEOUT_SECONDS");
+        cfg.pool_size = requireInt("REDIS_POOL_SIZE");
+        requirePositive("REDIS_PORT", cfg.port);
+        requirePositive("REDIS_POOL_SIZE", cfg.pool_size);
+        if (cfg.db < 0) {
+            throw ConfigException("REDIS_DB 必须 >= 0");
+        }
+        requirePositive("REDIS_CONNECT_TIMEOUT_SECONDS", static_cast<int>(cfg.connect_timeout_seconds));
+        requirePositive("REDIS_COMMAND_TIMEOUT_SECONDS", static_cast<int>(cfg.command_timeout_seconds));
         return cfg;
     }
 

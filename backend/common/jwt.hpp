@@ -2,8 +2,8 @@
 #pragma once
 
 #include <algorithm>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
@@ -121,11 +121,10 @@ class HashService {
 
     // review
     static bool isValidIdCardFormat(const std::string& id_card) {
-        if (id_card.size() == 15) {//一代身份证
-            return std::all_of(id_card.begin(), id_card.end(),
-                               [](unsigned char c) { return std::isdigit(c) != 0; });
+        if (id_card.size() == 15) { // 一代身份证
+            return std::all_of(id_card.begin(), id_card.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
         }
-        if (id_card.size() != 18) {//二代身份证
+        if (id_card.size() != 18) { // 二代身份证
             return false;
         }
         for (std::size_t i = 0; i < 17; ++i) {
@@ -295,6 +294,7 @@ class JwtService {
     int clock_skew_seconds_;
 
     // review
+    // 测试所用为public，正式项目中是private
     explicit JwtService(payment_config::JwtConfig cfg)
         : algorithm_(std::move(cfg.algorithm)), secret_(std::move(cfg.secret)),
           qr_ttl_seconds_(cfg.qr_token_ttl_seconds), clock_skew_seconds_(cfg.clock_skew_seconds) {

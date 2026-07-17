@@ -1,0 +1,5 @@
+if(EXISTS "/home/xianzun/桌面/paid_http/gateway/tests/build/gateway_tests[1]_tests.cmake")
+  include("/home/xianzun/桌面/paid_http/gateway/tests/build/gateway_tests[1]_tests.cmake")
+else()
+  add_test(gateway_tests_NOT_BUILT gateway_tests_NOT_BUILT)
+endif()

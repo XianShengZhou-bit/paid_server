@@ -38,7 +38,11 @@ struct RedisConfig {
     std::string host;
     int port;
     int db;
+    std::string username;
     std::string password;
+    unsigned int connect_timeout_seconds;
+    unsigned int command_timeout_seconds;
+    int pool_size;
 };
 
 // review
@@ -105,6 +109,9 @@ struct LoggerConfig {
 
 // review
 struct PaymentRuntimeConfig {
+    // @brief 登录会话在 Redis 中的有效期，单位是秒。
+    int login_session_ttl_seconds;
+
     // @brief 这是创建支付会话的过期时间，支付会话保存在sql中
     int payment_session_ttl_seconds;
 
@@ -205,10 +212,21 @@ class Config {
         cfg.host = requireString("REDIS_HOST");
         cfg.port = requireInt("REDIS_PORT");
         cfg.db = requireInt("REDIS_DB");
-        cfg.password = requireString("REDIS_PASSWORD");
+        cfg.username = requireString("REDIS_BACKEND_USERNAME");
+        cfg.password = requireString("REDIS_BACKEND_PASSWORD");
+        cfg.connect_timeout_seconds = requireInt("REDIS_CONNECT_TIMEOUT_SECONDS");
+        cfg.command_timeout_seconds = requireInt("REDIS_COMMAND_TIMEOUT_SECONDS");
+        cfg.pool_size = requireInt("REDIS_POOL_SIZE");
         requirePositive("REDIS_PORT", cfg.port);
+        requirePositive("REDIS_POOL_SIZE", cfg.pool_size);
         if (cfg.db < 0) {
             throw ConfigException("REDIS_DB 必须 >= 0");
+        }
+        if (cfg.connect_timeout_seconds == 0) {
+            throw ConfigException("REDIS_CONNECT_TIMEOUT_SECONDS 必须为正数");
+        }
+        if (cfg.command_timeout_seconds == 0) {
+            throw ConfigException("REDIS_COMMAND_TIMEOUT_SECONDS 必须为正数");
         }
         return cfg;
     }
@@ -289,11 +307,14 @@ class Config {
     // 获取一个新的支付运行时配置
     PaymentRuntimeConfig runtime() const {
         PaymentRuntimeConfig cfg;
+        cfg.login_session_ttl_seconds =
+            findString("LOGIN_SESSION_TTL_SECONDS").has_value() ? requireInt("LOGIN_SESSION_TTL_SECONDS") : 86400;
         cfg.payment_session_ttl_seconds = requireInt("PAYMENT_SESSION_TTL_SECONDS");
         cfg.payment_attempt_request_ttl_seconds = requireInt("PAYMENT_ATTEMPT_REQUEST_TTL_SECONDS");
         cfg.websocket_heartbeat_interval_seconds = requireInt("WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS");
         cfg.websocket_idle_timeout_seconds = requireInt("WEBSOCKET_IDLE_TIMEOUT_SECONDS");
         cfg.login_reauth_max_retry = requireInt("LOGIN_REAUTH_MAX_RETRY");
+        requirePositive("LOGIN_SESSION_TTL_SECONDS", cfg.login_session_ttl_seconds);
         requirePositive("PAYMENT_SESSION_TTL_SECONDS", cfg.payment_session_ttl_seconds);
         requirePositive("PAYMENT_ATTEMPT_REQUEST_TTL_SECONDS", cfg.payment_attempt_request_ttl_seconds);
         requirePositive("WEBSOCKET_HEARTBEAT_INTERVAL_SECONDS", cfg.websocket_heartbeat_interval_seconds);
