@@ -231,6 +231,11 @@ class JwtService {
     }
 
     // review
+    static JwtService fromJwtConfig(const payment_config::JwtConfig& cfg) {
+        return JwtService(cfg);
+    }
+
+    // review
     // 生成支付二维码 JWT Token；入参 payload 是二维码 Token 的业务载荷，返回 JWT Token 字符串
     std::string issuePaymentQrToken(PaymentQrPayload payload) const {
         validatePaymentQrPayloadForIssue(payload);
@@ -294,7 +299,6 @@ class JwtService {
     int clock_skew_seconds_;
 
     // review
-    // 测试所用为public，正式项目中是private
     explicit JwtService(payment_config::JwtConfig cfg)
         : algorithm_(std::move(cfg.algorithm)), secret_(std::move(cfg.secret)),
           qr_ttl_seconds_(cfg.qr_token_ttl_seconds), clock_skew_seconds_(cfg.clock_skew_seconds) {

@@ -83,8 +83,7 @@ jobs:
       - name: Build and configure backend tests
         run: |
           cmake -S backend/tests -B backend/tests/build \
-            -DPAYMENT_TEST_ENV_FILE="${{ github.workspace }}/.env.ci" \
-            -DCMAKE_CXX_FLAGS="-Dprivate=public"
+            -DPAYMENT_TEST_ENV_FILE="${{ github.workspace }}/.env.ci"
           cmake --build backend/tests/build -j"$(nproc)"
 
       - name: Build and configure gateway tests

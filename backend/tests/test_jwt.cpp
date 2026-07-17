@@ -70,7 +70,7 @@ TEST(JwtServiceTest, RejectsExpiredToken) {
     jwt_cfg.qr_token_ttl_seconds = 1;
     jwt_cfg.clock_skew_seconds = 0;
 
-    payment_jwt::JwtService jwt(jwt_cfg);
+    payment_jwt::JwtService jwt = payment_jwt::JwtService::fromJwtConfig(jwt_cfg);
     payment_jwt::PaymentQrPayload payload;
     payload.payment_session_id = "PS20260708000000000003";
 
