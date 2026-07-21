@@ -216,12 +216,18 @@ class WsRegistry {
         return sendTextFrame(it->second, message);
     }
 
+    // review
+    std::size_t connectionCount() {
+        std::lock_guard<std::mutex> lock(mu_);
+        return session_to_fd_.size();
+    }
+
   private:
     WsRegistry() = default;
 
     std::mutex mu_;
     std::unordered_map<std::string, int> session_to_fd_;
     std::unordered_map<int, std::string> fd_to_session_;
-};
+}; // 可以优化为redis上(好处是可以设置生命周期，清理僵尸连接)，但是需要写权限，TODO
 
 } // namespace gateway_ws

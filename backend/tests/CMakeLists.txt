@@ -50,6 +50,8 @@ add_executable(payment_tests
     test_payment_finalize.cpp
     test_redis_session.cpp
     test_auth_login.cpp
+    test_http_worker_pool.cpp
+    test_http_server.cpp
 )
 
 target_include_directories(payment_tests
@@ -69,6 +71,7 @@ target_link_libraries(payment_tests
         spdlog::spdlog
         ${MYSQL_CLIENT_LIBRARY}
         ${HIREDIS_LIBRARY}
+        pthread
 )
 
 # env 文件：

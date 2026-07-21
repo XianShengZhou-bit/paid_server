@@ -1,11 +1,14 @@
 // review
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -14,13 +17,32 @@
 
 #include "config.hpp"
 #include "gateway_impl.hpp"
+#include "http_server.hpp"
 #include "logger.hpp"
 #include "session_store.hpp"
+#include "thread_pool.hpp"
 #include "ws_registry.hpp"
 
 namespace {
 
 std::atomic<bool> g_running{true};
+std::atomic<int> g_ws_active_connections{0};
+
+// review
+void onShutdownSignal(int /*signo*/) {
+    g_running.store(false);
+}
+
+// review
+void installShutdownHandlers() {
+    struct sigaction action {};
+    action.sa_handler = onShutdownSignal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    if (::sigaction(SIGINT, &action, nullptr) != 0 || ::sigaction(SIGTERM, &action, nullptr) != 0) {
+        throw std::runtime_error(std::string("注册退出信号处理失败: ") + std::strerror(errno));
+    }
+}
 
 // review
 std::string trim(const std::string& input) {
@@ -33,7 +55,6 @@ std::string trim(const std::string& input) {
 }
 
 // review
-// 解析http请求报头，存入request结构体
 bool readHttpRequest(int client_fd, gateway_impl::HttpRequest& request) {
     std::string raw;
     char buffer[4096];
@@ -50,7 +71,7 @@ bool readHttpRequest(int client_fd, gateway_impl::HttpRequest& request) {
 
     const std::size_t header_end = raw.find("\r\n\r\n");
     std::istringstream header_stream(raw.substr(0, header_end));
-    std::string request_line; // 状态行
+    std::string request_line;
     if (!std::getline(header_stream, request_line)) {
         return false;
     }
@@ -113,7 +134,6 @@ bool readHttpRequest(int client_fd, gateway_impl::HttpRequest& request) {
 }
 
 // review
-// 将response结构体中的http响应报头写入client_fd
 void writeHttpResponse(int client_fd, const gateway_impl::HttpResponse& response) {
     std::ostringstream oss;
     oss << "HTTP/1.1 " << response.http_status << " OK\r\n";
@@ -129,6 +149,19 @@ void writeHttpResponse(int client_fd, const gateway_impl::HttpResponse& response
 }
 
 // review
+void handleHttpClientConnection(int client_fd, const std::string& client_ip) {
+    gateway_impl::HttpRequest request;
+    request.client_ip = client_ip;
+    if (!readHttpRequest(client_fd, request)) {
+        LOG_WARN("读取 HTTP 请求失败: client_ip={}", request.client_ip);
+        return;
+    }
+
+    LOG_INFO("收到请求: {} {}", request.method, request.path);
+    const gateway_impl::HttpResponse response = gateway_impl::handleRequest(request);
+    writeHttpResponse(client_fd, response);
+}
+
 std::string resolveEnvPath(int argc, char** argv) {
     if (argc < 2) {
         throw std::runtime_error("未指定环境变量文件路径");
@@ -141,7 +174,7 @@ std::string resolveEnvPath(int argc, char** argv) {
 }
 
 // review
-int createListenSocket(uint16_t port) {
+int createListenSocket(uint16_t port, int backlog) {
     const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         throw std::runtime_error("创建 socket 失败");
@@ -158,15 +191,23 @@ int createListenSocket(uint16_t port) {
     if (::bind(server_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0) {
         throw std::runtime_error(std::string("bind 失败: ") + std::strerror(errno));
     }
-    if (::listen(server_fd, 16) < 0) {
+    if (::listen(server_fd, backlog) < 0) {
         throw std::runtime_error("listen 失败");
     }
     return server_fd;
 }
 
 // review
-// 处理websocket客户端的连接
 void handleWebSocketClient(int client_fd) {
+    struct ConnectionGuard {
+        ConnectionGuard() {
+            g_ws_active_connections.fetch_add(1);
+        }
+        ~ConnectionGuard() {
+            g_ws_active_connections.fetch_sub(1);
+        }
+    } guard;
+
     std::string raw;
     char buffer[4096];
     while (raw.find("\r\n\r\n") == std::string::npos) {
@@ -190,12 +231,11 @@ void handleWebSocketClient(int client_fd) {
     }
 
     gateway_ws::WsRegistry::instance().bind(payment_session_id, client_fd);
-    gateway_ws::sendTextFrame(client_fd,
-                              R"({"type":"BIND_SUCCESS"})"); // 返回绑定成功的信息给client_fd，告诉前端可以渲染二维码了
+    gateway_ws::sendTextFrame(client_fd, R"({"type":"BIND_SUCCESS"})");
     LOG_INFO("WebSocket 绑定成功: payment_session_id={}", payment_session_id);
 
-    while (g_running.load()) {                                       // 判断网关是否还在运行
-        const ssize_t n = ::read(client_fd, buffer, sizeof(buffer)); // 阻塞式读取客户端发送的数据
+    while (g_running.load()) {
+        const ssize_t n = ::read(client_fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -207,55 +247,55 @@ void handleWebSocketClient(int client_fd) {
 }
 
 // review
-void runWebSocketServer(uint16_t port) {
-    const int server_fd = createListenSocket(port);
-    LOG_INFO("gateway websocket 启动: 0.0.0.0:{}", port);
+void runWebSocketServer(uint16_t port, int backlog, int max_connections) {
+    const int server_fd = createListenSocket(port, backlog);
+    const int flags = ::fcntl(server_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        ::fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    LOG_INFO("gateway websocket 启动: 0.0.0.0:{}, max_connections={}", port, max_connections);
 
     while (g_running.load()) {
-        const int client_fd = ::accept(server_fd, nullptr, nullptr);
-        if (client_fd < 0) {
-            if (g_running.load()) {
+        pollfd poll_event{};
+        poll_event.fd = server_fd;
+        poll_event.events = POLLIN;
+        const int ready = ::poll(&poll_event, 1, 500);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            LOG_ERROR("websocket poll 失败: {}", std::strerror(errno));
+            break;
+        }
+        if (ready == 0) {
+            continue;
+        }
+
+        while (g_running.load()) {
+            const int client_fd = ::accept(server_fd, nullptr, nullptr);
+            if (client_fd < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                if (errno == EINTR) {
+                    continue;
+                }
                 LOG_ERROR("websocket accept 失败: {}", std::strerror(errno));
+                break;
             }
-            continue;
+
+            if (g_ws_active_connections.load() >= max_connections) {
+                LOG_WARN("WebSocket 连接数已达上限 {}, 拒绝新连接", max_connections);
+                ::close(client_fd);
+                continue;
+            }
+
+            std::thread(handleWebSocketClient, client_fd).detach();
         }
-        std::thread(handleWebSocketClient, client_fd).detach(); // 单开一个线程用于通知client_fd
     }
 
     ::close(server_fd);
-}
-
-// review
-void runHttpServer(uint16_t port) {
-    const int server_fd = createListenSocket(port);
-    LOG_INFO("gateway http 启动: 0.0.0.0:{}", port);
-
-    while (g_running.load()) {
-        sockaddr_in client_addr{};
-        socklen_t client_len = sizeof(client_addr);
-        const int client_fd = ::accept(server_fd, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
-        if (client_fd < 0) {
-            if (g_running.load()) {
-                LOG_ERROR("http accept 失败: {}", std::strerror(errno));
-            }
-            continue;
-        }
-
-        gateway_impl::HttpRequest request;
-        char client_ip[INET_ADDRSTRLEN] = {};
-        ::inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
-        request.client_ip = client_ip;
-        if (readHttpRequest(client_fd, request)) {
-            LOG_INFO("收到请求: {} {}", request.method, request.path);
-            const gateway_impl::HttpResponse response = gateway_impl::handleRequest(request);
-            writeHttpResponse(client_fd, response);
-        } else {
-            LOG_WARN("读取 HTTP 请求失败: client_ip={}", request.client_ip);
-        }
-        ::close(client_fd);
-    }
-
-    ::close(server_fd);
+    LOG_INFO("gateway websocket 已停止监听");
 }
 
 } // namespace
@@ -275,13 +315,30 @@ int main(int argc, char** argv) {
         gateway_session::SessionStore::instance().initFromConfig();
 
         const auto gateway = config.paymentGateway();
+        const auto http_cfg = config.httpServer();
+        const int ws_max_connections = config.wsMaxConnections();
+
+        http_server::Options options;
+        options.port = static_cast<uint16_t>(gateway.http_port);
+        options.listen_backlog = http_cfg.listen_backlog;
+        options.worker_threads = http_cfg.worker_threads;
+        options.max_concurrent_connections = http_cfg.max_concurrent_connections;
+        options.read_timeout_seconds = http_cfg.read_timeout_seconds;
+
+        gateway_http::WorkerPool::instance().init(http_cfg.worker_threads);
+
+        http_server::Server http_server(options);
+        installShutdownHandlers();
+
         LOG_INFO("启动 gateway 服务: http=0.0.0.0:{}, websocket=0.0.0.0:{}", gateway.http_port, gateway.websocket_port);
-        std::thread ws_thread(runWebSocketServer, static_cast<uint16_t>(gateway.websocket_port));
-        runHttpServer(static_cast<uint16_t>(gateway.http_port));
+        std::thread ws_thread(runWebSocketServer, static_cast<uint16_t>(gateway.websocket_port),
+                              http_cfg.listen_backlog, ws_max_connections);
+        http_server.run(handleHttpClientConnection, &g_running);
         g_running.store(false);
         if (ws_thread.joinable()) {
             ws_thread.join();
         }
+        LOG_INFO("gateway 服务已停止");
     } catch (const std::exception& ex) {
         std::cerr << "启动失败: " << ex.what() << std::endl;
         return 1;

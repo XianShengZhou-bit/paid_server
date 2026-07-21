@@ -4,19 +4,41 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 #include "config.hpp"
+#include "http_server.hpp"
 #include "logger.hpp"
 #include "mysql_pool.hpp"
 #include "payment_impl.hpp"
 #include "redis_pool.hpp"
+#include "thread_pool.hpp"
 
 namespace {
+
+std::atomic<bool> g_running{true};
+
+// review
+void onShutdownSignal(int /*signo*/) {
+    g_running.store(false);
+}
+
+// review
+void installShutdownHandlers() {
+    struct sigaction action {};
+    action.sa_handler = onShutdownSignal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    if (::sigaction(SIGINT, &action, nullptr) != 0 || ::sigaction(SIGTERM, &action, nullptr) != 0) {
+        throw std::runtime_error(std::string("注册退出信号处理失败: ") + std::strerror(errno));
+    }
+}
 
 // review
 std::string trim(const std::string& input) {
@@ -41,7 +63,7 @@ bool readHttpRequest(int client_fd, payment_impl::HttpRequest& request) {
         if (raw.size() > 1024 * 1024) {
             return false;
         }
-    } // 主要是为了获取请求头
+    }
 
     const std::size_t header_end = raw.find("\r\n\r\n");
     std::istringstream header_stream(raw.substr(0, header_end));
@@ -58,7 +80,7 @@ bool readHttpRequest(int client_fd, payment_impl::HttpRequest& request) {
     line_stream >> request.method >> target;
     if (request.method.empty() || target.empty()) {
         return false;
-    } // 为了获取请求方法和路径
+    }
 
     const std::size_t query_pos = target.find('?');
     if (query_pos == std::string::npos) {
@@ -66,7 +88,7 @@ bool readHttpRequest(int client_fd, payment_impl::HttpRequest& request) {
     } else {
         request.path = target.substr(0, query_pos);
         request.query = target.substr(query_pos + 1);
-    } // 为了获取请求路径和对应参数
+    }
 
     std::string header_line;
     std::size_t content_length = 0;
@@ -87,15 +109,14 @@ bool readHttpRequest(int client_fd, payment_impl::HttpRequest& request) {
         if (key == "Content-Length") {
             content_length = static_cast<std::size_t>(std::stoul(value));
         }
-    } // 为了获取请求头中的键值对
+    }
 
     const std::string body_prefix = raw.substr(header_end + 4);
     if (body_prefix.size() >= content_length) {
         request.body = body_prefix.substr(0, content_length);
         return true;
     }
-    // 为了获取请求体
-    // 如果请求体长度小于content_length，则需要继续读取
+
     request.body = body_prefix;
     while (request.body.size() < content_length) {
         const ssize_t n = ::read(client_fd, buffer, sizeof(buffer));
@@ -105,8 +126,6 @@ bool readHttpRequest(int client_fd, payment_impl::HttpRequest& request) {
         request.body.append(buffer, static_cast<std::size_t>(n));
     }
     request.body.resize(content_length);
-    // 为了获取请求体
-
     return true;
 }
 
@@ -127,6 +146,20 @@ void writeHttpResponse(int client_fd, const payment_impl::HttpResponse& response
 }
 
 // review
+void handleClientConnection(int client_fd) {
+    payment_impl::HttpRequest request;
+    if (!readHttpRequest(client_fd, request)) {
+        LOG_WARN("读取 HTTP 请求失败");
+        return;
+    }
+
+    LOG_INFO("收到请求: {}", request.path);
+    const payment_impl::HttpResponse response = payment_impl::handleRequest(request);
+    LOG_INFO("响应请求: {}", response.http_status);
+    writeHttpResponse(client_fd, response);
+}
+
+// review
 std::string resolveEnvPath(int argc, char** argv) {
     if (argc < 2) {
         throw std::runtime_error("未指定环境变量文件路径");
@@ -140,6 +173,7 @@ std::string resolveEnvPath(int argc, char** argv) {
 
 } // namespace
 
+// review
 int main(int argc, char** argv) {
     try {
         const std::string env_path = resolveEnvPath(argc, argv);
@@ -158,51 +192,25 @@ int main(int argc, char** argv) {
         LOG_INFO("Redis 读写连接池初始化完成");
 
         const auto backend = config.paymentBackend();
-        const int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0) {
-            throw std::runtime_error("创建 socket 失败");
-        }
+        const auto http_cfg = config.httpServer();
 
-        int reuse = 1;
-        ::setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        http_server::Options options;
+        options.port = static_cast<uint16_t>(backend.http_port);
+        options.listen_backlog = http_cfg.listen_backlog;
+        options.worker_threads = http_cfg.worker_threads;
+        options.max_concurrent_connections = http_cfg.max_concurrent_connections;
+        options.read_timeout_seconds = http_cfg.read_timeout_seconds;
 
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_port = htons(static_cast<uint16_t>(backend.http_port));
-        // PAYMENT_BACKEND_IP 是网关/客户端访问地址，不是 bind 地址；监听固定 0.0.0.0
-        address.sin_addr.s_addr = INADDR_ANY;
+        payment_http::WorkerPool::instance().init(http_cfg.worker_threads);
 
-        if (::bind(server_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0) {
-            throw std::runtime_error(std::string("bind 失败: ") + std::strerror(errno));
-        }
-        if (::listen(server_fd, 16) < 0) {
-            throw std::runtime_error("listen 失败");
-        }
+        http_server::Server server(options);
+        installShutdownHandlers();
 
         LOG_INFO("payment backend 启动: listen=0.0.0.0:{}, public={}:{}", backend.http_port, backend.ip,
                  backend.http_port);
-
-        while (true) {
-            const int client_fd = ::accept(server_fd, nullptr, nullptr);
-            if (client_fd < 0) {
-                LOG_ERROR("accept 失败: {}", std::strerror(errno));
-                continue;
-            }
-
-            // 后续引入epoll + 线程池提高并发量
-            payment_impl::HttpRequest request;
-            if (readHttpRequest(client_fd, request)) {
-                LOG_INFO("收到请求: {}", request.path);
-                const payment_impl::HttpResponse response = payment_impl::handleRequest(request);
-                LOG_INFO("响应请求: {}", response.http_status);
-                writeHttpResponse(client_fd, response);
-            } else {
-                LOG_WARN("读取 HTTP 请求失败");
-            }
-            ::close(client_fd);
-        }
+        server.run(handleClientConnection, &g_running);
+        LOG_INFO("payment backend 已停止");
     } catch (const std::exception& ex) {
-        // logger 可能在 init 之前就失败，此处不能用 LOG_*
         std::cerr << "启动失败: " << ex.what() << std::endl;
         return 1;
     } catch (...) {

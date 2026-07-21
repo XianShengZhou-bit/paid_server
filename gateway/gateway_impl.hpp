@@ -134,6 +134,17 @@ inline gateway_forward::HttpRequest toForwardRequest(const HttpRequest& request)
     if (!cookie.empty()) {
         forward.headers["Cookie"] = cookie;
     }
+    std::string client_ip = headerValue(request, "X-Forwarded-For");
+    if (client_ip.empty()) {
+        client_ip = headerValue(request, "X-Real-IP");
+    }
+    if (!client_ip.empty()) {
+        forward.headers["X-Forwarded-For"] = client_ip;
+    }
+    const std::string user_agent = headerValue(request, "User-Agent");
+    if (!user_agent.empty()) {
+        forward.headers["User-Agent"] = user_agent;
+    }
     return forward;
 }
 

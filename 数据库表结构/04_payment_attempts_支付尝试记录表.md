@@ -11,7 +11,7 @@
 | `result`             | TINYINT      | NOT NULL           | 0                                             | -        | 支付尝试结果：0-处理中，1-成功，2-失败     |
 | `fail_reason`        | VARCHAR(255) | NULL               | NULL                                          | -        | 支付失败原因，不允许记录支付密码等敏感信息 |
 | `client_ip`          | VARCHAR(64)  | NULL               | NULL                                          | -        | 发起支付请求的客户端 IP                    |
-| `user_agent`         | VARCHAR(255) | NULL               | NULL                                          | -        | 客户端浏览器或设备信息                     |
+| `user_agent`         | VARCHAR(512) | NULL               | NULL                                          | -        | 客户端浏览器或设备信息                     |
 | `created_at`         | DATETIME     | NOT NULL           | CURRENT_TIMESTAMP                             | 联合索引 | 支付尝试创建时间                           |
 | `updated_at`         | DATETIME     | NOT NULL           | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | 联合索引 | 支付尝试更新时间                           |
 

@@ -8,7 +8,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -18,6 +17,7 @@
 
 #include "config.hpp"
 #include "gateway_notify.hpp"
+#include "thread_pool.hpp"
 #include "jwt.hpp"
 #include "logger.hpp"
 #include "mysql_pool.hpp"
@@ -636,13 +636,11 @@ inline HttpResponse handlePay(const HttpRequest& req) {
     LOG_INFO("支付成功: order_sn={}, payment_session_id={}, request_id={}", order->order_sn,
              session->payment_session_id, request_id);
 
-    // 异步通知网关，避免网关 HTTP 单线程处理 pay 时阻塞 accept 导致死锁
     const std::string notify_session_id = session->payment_session_id;
     const std::string notify_order_sn = order->order_sn;
-    std::thread([notify_session_id, notify_order_sn]() {
+    payment_http::WorkerPool::instance().submit([notify_session_id, notify_order_sn]() {
         payment_gateway_notify::notifyPaymentResult(notify_session_id, notify_order_sn);
-    }).detach();
-    // TODO 后期使用线程池进行优化
+    });
 
     return respond(200, makeOk(json{{"payment_status", "PAID"}, {"request_id", request_id}}));
 }

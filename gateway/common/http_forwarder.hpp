@@ -187,6 +187,16 @@ inline HttpResponse forwardToBackend(const HttpRequest& request, const std::stri
         oss << "Cookie: " << cookie_it->second << "\r\n";
     }
 
+    const auto xff_it = request.headers.find("X-Forwarded-For");
+    if (xff_it != request.headers.end() && !xff_it->second.empty()) {
+        oss << "X-Forwarded-For: " << xff_it->second << "\r\n";
+    }
+
+    const auto user_agent_it = request.headers.find("User-Agent");
+    if (user_agent_it != request.headers.end() && !user_agent_it->second.empty()) {
+        oss << "User-Agent: " << user_agent_it->second << "\r\n";
+    }
+
     if (!request.body.empty()) {
         oss << "Content-Length: " << request.body.size() << "\r\n";
     }

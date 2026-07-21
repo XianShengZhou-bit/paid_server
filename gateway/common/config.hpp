@@ -53,6 +53,13 @@ struct LoggerConfig {
     bool console_enabled;
 };
 
+struct HttpServerConfig {
+    int worker_threads;
+    int listen_backlog;
+    int max_concurrent_connections;
+    int read_timeout_seconds;
+};
+
 class Config {
   public:
     static const Config& instance() {
@@ -150,6 +157,29 @@ class Config {
         cfg.port = requireInt("PAYMENT_NGINX_PORT");
         requirePositive("PAYMENT_NGINX_PORT", cfg.port);
         return cfg;
+    }
+
+    HttpServerConfig httpServer() const {
+        HttpServerConfig cfg;
+        cfg.worker_threads = findString("HTTP_WORKER_THREADS").has_value() ? requireInt("HTTP_WORKER_THREADS") : 20;
+        cfg.listen_backlog = findString("HTTP_LISTEN_BACKLOG").has_value() ? requireInt("HTTP_LISTEN_BACKLOG") : 128;
+        cfg.max_concurrent_connections = findString("HTTP_MAX_CONCURRENT_CONNECTIONS").has_value()
+                                             ? requireInt("HTTP_MAX_CONCURRENT_CONNECTIONS")
+                                             : 256;
+        cfg.read_timeout_seconds =
+            findString("HTTP_READ_TIMEOUT_SECONDS").has_value() ? requireInt("HTTP_READ_TIMEOUT_SECONDS") : 10;
+        requirePositive("HTTP_WORKER_THREADS", cfg.worker_threads);
+        requirePositive("HTTP_LISTEN_BACKLOG", cfg.listen_backlog);
+        requirePositive("HTTP_MAX_CONCURRENT_CONNECTIONS", cfg.max_concurrent_connections);
+        requirePositive("HTTP_READ_TIMEOUT_SECONDS", cfg.read_timeout_seconds);
+        return cfg;
+    }
+
+    int wsMaxConnections() const {
+        const int max_connections =
+            findString("WS_MAX_CONNECTIONS").has_value() ? requireInt("WS_MAX_CONNECTIONS") : 256;
+        requirePositive("WS_MAX_CONNECTIONS", max_connections);
+        return max_connections;
     }
 
   private:

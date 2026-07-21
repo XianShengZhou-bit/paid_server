@@ -168,7 +168,7 @@ CREATE TABLE payment_attempts (
   result TINYINT NOT NULL DEFAULT 0,
   fail_reason VARCHAR(255) NULL,
   client_ip VARCHAR(64) NULL,
-  user_agent VARCHAR(255) NULL,
+  user_agent VARCHAR(512) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_payment_session_id (payment_session_id),

@@ -43,6 +43,8 @@ add_executable(gateway_tests
     test_session_store.cpp
     test_payment_result.cpp
     test_handle_request.cpp
+    test_http_worker_pool.cpp
+    test_http_server.cpp
 )
 
 target_include_directories(gateway_tests
@@ -60,6 +62,7 @@ target_link_libraries(gateway_tests
         OpenSSL::Crypto
         spdlog::spdlog
         ${HIREDIS_LIBRARY}
+        pthread
 )
 
 # 与 backend/tests 一致：探测时靠环境变量注入 env；手跑传 argv。
